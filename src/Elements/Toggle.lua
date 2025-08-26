@@ -67,6 +67,7 @@ function Element:New(Idx, Config)
 
 	function Toggle:SetValue(Value)
 		Value = not not Value
+		if Toggle.Value == Value then return end
 		Toggle.Value = Value
 
 		Creator.OverrideTag(ToggleBorder, { Color = Toggle.Value and "Accent" or "ToggleSlider" })
