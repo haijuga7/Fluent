@@ -26,7 +26,7 @@ jobs:
       uses: ok-nick/setup-aftman@v0.3.0
     
     - name: Install Rojo, Lune and DarkLua
-      run: aftman instal
+      run: aftman install
       
     - name: Build and Compile
       run: |
