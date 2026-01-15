@@ -31,7 +31,7 @@ jobs:
     - name: Build and Compile
       run: |
         pnpm install
-        pnpm run rojo --verbose
+        pnpm run bundle
       
     - name: Upload Release Assets
       uses: alexellis/upload-assets@0.4.0
