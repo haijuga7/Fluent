@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   release:
     types: [ published, prereleased ]
-    
+
 permissions:
   contents: write
   packages: write
@@ -14,29 +14,58 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # Checkout repository
     - name: GitHub Checkout
       uses: actions/checkout@v3
 
-    - name: Setup PNPM
-      uses: pnpm/action-setup@v3
+    # Setup Node.js
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
       with:
-        version: 8
-        
+        node-version: 20
+
+    # Setup PNPM
+    - name: Setup PNPM
+      uses: pnpm/action-setup@v2
+      with:
+        version: 7
+        run_install: false   # don't run install automatically
+    
+    - name: Install dependencies
+      run: pnpm install --no-frozen-lockfile
+      
+    # Debug PNPM installation
+    - name: Check PNPM
+      run: pnpm --version
+
+    # Setup Aftman
     - name: Setup Aftman
       uses: ok-nick/setup-aftman@v0.3.0
-    
+
+    # Install Rojo, Lune and DarkLua
     - name: Install Rojo, Lune and DarkLua
       run: aftman install
-      
+
+    # Build and Compile
     - name: Build and Compile
+      run: pnpm run rojo --verbose
+
+    # Bundle Luau
+    - name: Bundle Luau
+      run: pnpm run bundle
+
+    - name: List files after bundle
       run: |
-        pnpm install
-        pnpm run bundle
-      
+        echo "Listing dist folder:"
+        ls -R dist || echo "dist folder does not exist"
+        echo "Listing root folder:"
+        ls -R
+
+    # Upload Release Assets
     - name: Upload Release Assets
       uses: alexellis/upload-assets@0.4.0
       env:
         ACTIONS_STEP_DEBUG: true
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ github.token }}
       with:
         asset_paths: '["dist/main.rbxm", "dist/main.lua"]'
