@@ -90,20 +90,21 @@ function Element:New(Idx, Config)
 	})
 
 	local DropdownScrollFrame = New("ScrollingFrame", {
-		Size = UDim2.new(1, -5, 1, -10),
-		Position = UDim2.fromOffset(5, 5),
-		BackgroundTransparency = 1,
-		BottomImage = "rbxassetid://6889812791",
-		MidImage = "rbxassetid://6889812721",
-		TopImage = "rbxassetid://6276641225",
-		ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255),
-		ScrollBarImageTransparency = 0.95,
-		ScrollBarThickness = 4,
-		BorderSizePixel = 0,
-		CanvasSize = UDim2.fromScale(0, 0),
-	}, {
-		DropdownListLayout,
-	})
+        Size = UDim2.new(1, -5, 1, -10),
+        Position = UDim2.fromOffset(5, 5),
+        BackgroundTransparency = 1,
+        BottomImage = "rbxassetid://6889812791",
+        MidImage = "rbxassetid://6889812721",
+        TopImage = "rbxassetid://6276641225",
+        ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255),
+        ScrollBarImageTransparency = 0.95,
+        ScrollBarThickness = 4,
+        BorderSizePixel = 0,
+        CanvasSize = UDim2.fromScale(0, 0),
+        ScrollingDirection = Enum.ScrollingDirection.Y,  -- TAMBAHKAN INI
+    }, {
+        DropdownListLayout,
+    })
 
 	local DropdownHolderFrame = New("Frame", {
 		Size = UDim2.fromScale(1, 0.6),
@@ -357,35 +358,30 @@ function Element:New(Idx, Config)
 				SetSelTransparency(Selected and 0 or 1)
 			end
 
-			ButtonLabel.InputBegan:Connect(function(Input)
-				if
-					Input.UserInputType == Enum.UserInputType.MouseButton1
-					or Input.UserInputType == Enum.UserInputType.Touch
-				then
-					local Try = not Selected
-
-					if Dropdown:GetActiveValues() == 1 and not Try and not Config.AllowNull then
-					else
-						if Config.Multi then
-							Selected = Try
-							Dropdown.Value[Value] = Selected and true or nil
-						else
-							Selected = Try
-							Dropdown.Value = Selected and Value or nil
-
-							for _, OtherButton in next, Buttons do
-								OtherButton:UpdateButton()
-							end
-						end
-
-						Table:UpdateButton()
-						Dropdown:Display()
-
-						Library:SafeCallback(Dropdown.Callback, Dropdown.Value)
-						Library:SafeCallback(Dropdown.Changed, Dropdown.Value)
-					end
-				end
-			end)
+			Creator.AddSignal(Button.MouseButton1Click, function()
+                local Try = not Selected
+            
+                if Dropdown:GetActiveValues() == 1 and not Try and not Config.AllowNull then
+                else
+                    if Config.Multi then
+                        Selected = Try
+                        Dropdown.Value[Value] = Selected and true or nil
+                    else
+                        Selected = Try
+                        Dropdown.Value = Selected and Value or nil
+            
+                        for _, OtherButton in next, Buttons do
+                            OtherButton:UpdateButton()
+                        end
+                    end
+            
+                    Table:UpdateButton()
+                    Dropdown:Display()
+            
+                    Library:SafeCallback(Dropdown.Callback, Dropdown.Value)
+                    Library:SafeCallback(Dropdown.Changed, Dropdown.Value)
+                end
+            end)
 
 			Table:UpdateButton()
 			Dropdown:Display()
