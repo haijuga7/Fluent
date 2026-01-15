@@ -33,7 +33,7 @@ jobs:
         pnpm install
         mkdir -p dist
         rojo build -o dist/main.rbxm --verbose
-        lune build -o dist/main.lua --verbose
+        lune build
       
     - name: Upload Release Assets
       uses: alexellis/upload-assets@0.4.0
