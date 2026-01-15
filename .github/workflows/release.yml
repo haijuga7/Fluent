@@ -37,6 +37,6 @@ jobs:
       uses: alexellis/upload-assets@0.4.0
       env:
         ACTIONS_STEP_DEBUG: true
-        GITHUB_TOKEN: ${{ github.TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.TOKEN }}
       with:
         asset_paths: '["dist/main.rbxm", "dist/main.lua"]'
