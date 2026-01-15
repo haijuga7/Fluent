@@ -21,16 +21,12 @@ jobs:
       uses: pnpm/action-setup@v3
       with:
         version: 8
-    
+        
     - name: Setup Aftman
       uses: ok-nick/setup-aftman@v0.3.0
     
     - name: Install Rojo, Lune and DarkLua
-      run: aftman install
-        
-    - name: Build and Compile
-      run: |
-        pnpm run rojo --verbose
+      run: aftman instal
       
     - name: Build and Compile
       run: |
