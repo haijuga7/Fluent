@@ -101,6 +101,8 @@ function Element:New(Idx, Config)
 		ScrollBarThickness = 4,
 		BorderSizePixel = 0,
 		CanvasSize = UDim2.fromScale(0, 0),
+		ScrollingDirection = Enum.ScrollingDirection.Y, -- FIX: Hanya scroll vertical
+		AutomaticCanvasSize = Enum.AutomaticSize.Y, -- FIX: Auto 
 	}, {
 		DropdownListLayout,
 	})
