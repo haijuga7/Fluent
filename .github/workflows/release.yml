@@ -31,7 +31,9 @@ jobs:
     - name: Build and Compile
       run: |
         pnpm install
-        pnpm run bundle
+        mkdir -p dist
+        rojo build -o dist/main.rbxm --verbose
+        lune build -o dist/main.lua --verbose
       
     - name: Upload Release Assets
       uses: alexellis/upload-assets@0.4.0
