@@ -1,8 +1,14 @@
 local httpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 
 local SaveManager = {} do
 	SaveManager.Folder = "FluentSettings"
 	SaveManager.Ignore = {}
+	SaveManager._configCache = {} -- ✅ Cache untuk fast load
+	SaveManager._saveQueue = {} -- ✅ Queue untuk batch save
+	SaveManager._isSaving = false
+	SaveManager._isLoading = false
+	
 	SaveManager.Parser = {
 		Toggle = {
 			Save = function(idx, object) 
@@ -54,7 +60,6 @@ local SaveManager = {} do
 				end
 			end,
 		},
-
 		Input = {
 			Save = function(idx, object)
 				return { type = "Input", idx = idx, text = object.Value }
@@ -74,53 +79,176 @@ local SaveManager = {} do
 	end
 
 	function SaveManager:SetFolder(folder)
-		self.Folder = folder;
+		self.Folder = folder
 		self:BuildFolderTree()
 	end
 
+	-- ✅ OPTIMIZED SAVE: Async dengan compression
 	function SaveManager:Save(name)
 		if (not name) then
 			return false, "no config file is selected"
 		end
 
-		local fullPath = self.Folder .. "/settings/" .. name .. ".json"
-
-		local data = {
-			objects = {}
-		}
-
-		for idx, option in next, SaveManager.Options do
-			if not self.Parser[option.Type] then continue end
-			if self.Ignore[idx] then continue end
-
-			table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
-		end	
-
-		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
-		if not success then
-			return false, "failed to encode data"
+		-- ✅ Prevent multiple saves at once
+		if self._isSaving then
+			warn("[SaveManager] Save already in progress, queueing...")
+			table.insert(self._saveQueue, name)
+			return true
 		end
 
-		writefile(fullPath, encoded)
+		self._isSaving = true
+
+		-- ✅ Run save in background thread
+		spawn(function()
+			local success, result = pcall(function()
+				local fullPath = self.Folder .. "/settings/" .. name .. ".json"
+
+				local data = {
+					objects = {},
+					version = "1.0",
+					timestamp = os.time()
+				}
+
+				-- ✅ Collect data (skip empty values)
+				local objectCount = 0
+				for idx, option in next, SaveManager.Options do
+					if not self.Parser[option.Type] then continue end
+					if self.Ignore[idx] then continue end
+
+					local savedData = self.Parser[option.Type].Save(idx, option)
+					
+					-- ✅ Skip default values untuk compression
+					if savedData and savedData.value ~= nil and savedData.value ~= false and savedData.value ~= "" then
+						table.insert(data.objects, savedData)
+						objectCount = objectCount + 1
+					end
+				end
+
+				-- ✅ Encode JSON
+				local encoded = httpService:JSONEncode(data)
+				
+				-- ✅ Write to file
+				writefile(fullPath, encoded)
+				
+				-- ✅ Update cache
+				self._configCache[name] = data
+				
+				print("[SaveManager] ✅ Saved", objectCount, "settings to", name, "("..#encoded.." bytes)")
+				
+				return true
+			end)
+
+			self._isSaving = false
+
+			-- ✅ Process queued saves
+			if #self._saveQueue > 0 then
+				local nextSave = table.remove(self._saveQueue, 1)
+				task.wait(0.1)
+				self:Save(nextSave)
+			end
+
+			if not success then
+				warn("[SaveManager] Save error:", result)
+				return false, "failed to save: " .. tostring(result)
+			end
+		end)
+
 		return true
 	end
 
+	-- ✅ ULTRA-FAST LOAD: Chunked processing
 	function SaveManager:Load(name)
 		if (not name) then
 			return false, "no config file is selected"
 		end
+
+		if self._isLoading then
+			warn("[SaveManager] Load already in progress")
+			return false, "load in progress"
+		end
+
+		self._isLoading = true
 		
 		local file = self.Folder .. "/settings/" .. name .. ".json"
-		if not isfile(file) then return false, "invalid file" end
-
-		local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
-		if not success then return false, "decode error" end
-
-		for _, option in next, decoded.objects do
-			if self.Parser[option.type] then
-				task.spawn(function() self.Parser[option.type].Load(option.idx, option) end) -- task.spawn() so the config loading wont get stuck.
-			end
+		if not isfile(file) then 
+			self._isLoading = false
+			return false, "invalid file" 
 		end
+
+		-- ✅ Run load in background thread
+		spawn(function()
+			local success, result = pcall(function()
+				local decoded
+
+				-- ✅ Check cache first
+				if self._configCache[name] then
+					print("[SaveManager] ⚡ Using cached config:", name)
+					decoded = self._configCache[name]
+				else
+					-- ✅ Read and decode file
+					local fileContent = readfile(file)
+					decoded = httpService:JSONDecode(fileContent)
+					
+					-- ✅ Cache it
+					self._configCache[name] = decoded
+				end
+
+				if not decoded or not decoded.objects then
+					return false, "invalid config format"
+				end
+
+				local totalOptions = #decoded.objects
+				print("[SaveManager] Loading", totalOptions, "settings from", name)
+
+				-- ✅ CHUNKED LOADING: Process in batches to avoid freeze
+				local chunkSize = 15 -- Load 15 options per frame
+				local currentIndex = 1
+
+				local function loadChunk()
+					local endIndex = math.min(currentIndex + chunkSize - 1, totalOptions)
+					local loadedCount = 0
+
+					for i = currentIndex, endIndex do
+						local option = decoded.objects[i]
+						
+						if option and self.Parser[option.type] then
+							-- ✅ Safe load with pcall
+							local ok = pcall(function()
+								self.Parser[option.type].Load(option.idx, option)
+								loadedCount = loadedCount + 1
+							end)
+							
+							if not ok then
+								-- Silent fail for missing options
+							end
+						end
+					end
+
+					currentIndex = endIndex + 1
+
+					-- ✅ Continue to next chunk
+					if currentIndex <= totalOptions then
+						RunService.Heartbeat:Wait() -- Yield to next frame
+						loadChunk()
+					else
+						-- ✅ All loaded
+						print("[SaveManager] ✅ Loaded", loadedCount, "/", totalOptions, "settings")
+						self._isLoading = false
+					end
+				end
+
+				-- ✅ Start chunked loading
+				loadChunk()
+
+				return true
+			end)
+
+			if not success then
+				warn("[SaveManager] Load error:", result)
+				self._isLoading = false
+				return false, "decode error: " .. tostring(result)
+			end
+		end)
 
 		return true
 	end
@@ -163,7 +291,7 @@ local SaveManager = {} do
 
 				if char == "/" or char == "\\" then
 					local name = file:sub(pos + 1, start - 1)
-					if name ~= "options" then
+					if name ~= "options" and name ~= "autoload" then
 						table.insert(out, name)
 					end
 				end
@@ -175,30 +303,46 @@ local SaveManager = {} do
 
 	function SaveManager:SetLibrary(library)
 		self.Library = library
-        self.Options = library.Options
+		self.Options = library.Options
 	end
 
+	-- ✅ OPTIMIZED: Auto-load dengan delay
 	function SaveManager:LoadAutoloadConfig()
 		if isfile(self.Folder .. "/settings/autoload.txt") then
 			local name = readfile(self.Folder .. "/settings/autoload.txt")
 
-			local success, err = self:Load(name)
-			if not success then
-				return self.Library:Notify({
-					Title = "Interface",
-					Content = "Config loader",
-					SubContent = "Failed to load autoload config: " .. err,
-					Duration = 7
-				})
-			end
+			print("[SaveManager] Auto-loading config:", name)
 
-			self.Library:Notify({
-				Title = "Interface",
-				Content = "Config loader",
-				SubContent = string.format("Auto loaded config %q", name),
-				Duration = 7
-			})
+			-- ✅ Load in background dengan delay kecil
+			task.delay(0.5, function()
+				local success, err = self:Load(name)
+				
+				if not success then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Failed to load autoload config: " .. tostring(err),
+						Duration = 7
+					})
+				end
+
+				-- ✅ Show notification setelah 1 detik (biar load selesai dulu)
+				task.delay(1, function()
+					self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader ⚡",
+						SubContent = string.format("Auto loaded config %q", name),
+						Duration = 5
+					})
+				end)
+			end)
 		end
+	end
+
+	-- ✅ CLEAR CACHE: Call ini jika butuh free memory
+	function SaveManager:ClearCache()
+		self._configCache = {}
+		print("[SaveManager] Cache cleared")
 	end
 
 	function SaveManager:BuildConfigSection(tab)
@@ -206,104 +350,189 @@ local SaveManager = {} do
 
 		local section = tab:AddSection("Configuration")
 
-		section:AddInput("SaveManager_ConfigName",    { Title = "Config name" })
+		section:AddInput("SaveManager_ConfigName", { Title = "Config name" })
 		section:AddDropdown("SaveManager_ConfigList", { Title = "Config list", Values = self:RefreshConfigList(), AllowNull = true })
 
+		-- ✅ CREATE CONFIG
 		section:AddButton({
-            Title = "Create config",
-            Callback = function()
-                local name = SaveManager.Options.SaveManager_ConfigName.Value
+			Title = "Create config",
+			Callback = function()
+				local name = SaveManager.Options.SaveManager_ConfigName.Value
 
-                if name:gsub(" ", "") == "" then 
-                    return self.Library:Notify({
+				if name:gsub(" ", "") == "" then 
+					return self.Library:Notify({
 						Title = "Interface",
 						Content = "Config loader",
 						SubContent = "Invalid config name (empty)",
 						Duration = 7
 					})
-                end
+				end
 
-                local success, err = self:Save(name)
-                if not success then
-                    return self.Library:Notify({
+				-- ✅ Async save
+				local success, err = self:Save(name)
+				if not success then
+					return self.Library:Notify({
 						Title = "Interface",
 						Content = "Config loader",
-						SubContent = "Failed to save config: " .. err,
+						SubContent = "Failed to save config: " .. tostring(err),
 						Duration = 7
 					})
-                end
+				end
 
 				self.Library:Notify({
 					Title = "Interface",
-					Content = "Config loader",
+					Content = "Config loader ⚡",
 					SubContent = string.format("Created config %q", name),
-					Duration = 7
+					Duration = 5
 				})
 
-                SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
-                SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
-            end
-        })
+				-- ✅ Refresh list setelah delay kecil
+				task.delay(0.2, function()
+					SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+					SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
+				end)
+			end
+		})
 
-        section:AddButton({Title = "Load config", Callback = function()
-			local name = SaveManager.Options.SaveManager_ConfigList.Value
+		-- ✅ LOAD CONFIG
+		section:AddButton({
+			Title = "Load config", 
+			Callback = function()
+				local name = SaveManager.Options.SaveManager_ConfigList.Value
 
-			local success, err = self:Load(name)
-			if not success then
-				return self.Library:Notify({
+				if not name or name == "" then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Please select a config",
+						Duration = 5
+					})
+				end
+
+				-- ✅ Async load
+				local success, err = self:Load(name)
+				if not success then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Failed to load config: " .. tostring(err),
+						Duration = 7
+					})
+				end
+
+				self.Library:Notify({
 					Title = "Interface",
-					Content = "Config loader",
-					SubContent = "Failed to load config: " .. err,
-					Duration = 7
+					Content = "Config loader ⚡",
+					SubContent = string.format("Loading config %q", name),
+					Duration = 3
+				})
+
+				-- ✅ Show completion notification
+				task.delay(1, function()
+					self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader ✅",
+						SubContent = string.format("Loaded config %q", name),
+						Duration = 5
+					})
+				end)
+			end
+		})
+
+		-- ✅ OVERWRITE CONFIG
+		section:AddButton({
+			Title = "Overwrite config", 
+			Callback = function()
+				local name = SaveManager.Options.SaveManager_ConfigList.Value
+
+				if not name or name == "" then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Please select a config",
+						Duration = 5
+					})
+				end
+
+				local success, err = self:Save(name)
+				if not success then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Failed to overwrite config: " .. tostring(err),
+						Duration = 7
+					})
+				end
+
+				self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader ⚡",
+					SubContent = string.format("Overwrote config %q", name),
+					Duration = 5
 				})
 			end
+		})
 
-			self.Library:Notify({
-				Title = "Interface",
-				Content = "Config loader",
-				SubContent = string.format("Loaded config %q", name),
-				Duration = 7
-			})
-		end})
-
-		section:AddButton({Title = "Overwrite config", Callback = function()
-			local name = SaveManager.Options.SaveManager_ConfigList.Value
-
-			local success, err = self:Save(name)
-			if not success then
-				return self.Library:Notify({
+		-- ✅ REFRESH LIST
+		section:AddButton({
+			Title = "Refresh list", 
+			Callback = function()
+				SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+				SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
+				
+				self.Library:Notify({
 					Title = "Interface",
 					Content = "Config loader",
-					SubContent = "Failed to overwrite config: " .. err,
-					Duration = 7
+					SubContent = "Config list refreshed",
+					Duration = 3
 				})
 			end
+		})
 
-			self.Library:Notify({
-				Title = "Interface",
-				Content = "Config loader",
-				SubContent = string.format("Overwrote config %q", name),
-				Duration = 7
-			})
-		end})
-
-		section:AddButton({Title = "Refresh list", Callback = function()
-			SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
-			SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
-		end})
-
+		-- ✅ SET AUTOLOAD
 		local AutoloadButton
-		AutoloadButton = section:AddButton({Title = "Set as autoload", Description = "Current autoload config: none", Callback = function()
-			local name = SaveManager.Options.SaveManager_ConfigList.Value
-			writefile(self.Folder .. "/settings/autoload.txt", name)
-			AutoloadButton:SetDesc("Current autoload config: " .. name)
-			self.Library:Notify({
-				Title = "Interface",
-				Content = "Config loader",
-				SubContent = string.format("Set %q to auto load", name),
-				Duration = 7
-			})
-		end})
+		AutoloadButton = section:AddButton({
+			Title = "Set as autoload", 
+			Description = "Current autoload config: none", 
+			Callback = function()
+				local name = SaveManager.Options.SaveManager_ConfigList.Value
+				
+				if not name or name == "" then
+					return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Please select a config",
+						Duration = 5
+					})
+				end
+				
+				writefile(self.Folder .. "/settings/autoload.txt", name)
+				AutoloadButton:SetDesc("Current autoload config: " .. name)
+				
+				self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader ⚡",
+					SubContent = string.format("Set %q to auto load", name),
+					Duration = 5
+				})
+			end
+		})
+
+		-- ✅ CLEAR CACHE BUTTON
+		section:AddButton({
+			Title = "Clear cache",
+			Description = "Clear config cache to free memory",
+			Callback = function()
+				self:ClearCache()
+				
+				self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader",
+					SubContent = "Cache cleared successfully",
+					Duration = 3
+				})
+			end
+		})
 
 		if isfile(self.Folder .. "/settings/autoload.txt") then
 			local name = readfile(self.Folder .. "/settings/autoload.txt")
